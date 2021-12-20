@@ -1,0 +1,11 @@
+<body>
+<script>
+async function main() {
+  if (!window.ethereum) throw new Error("metamask not installed");
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  const account = accounts[0];
+  console.log(accounts);
+}
+main().then((v) => console.log("ok!", v), (err) => console.error("ERR!", err));
+</script>
+</body>
