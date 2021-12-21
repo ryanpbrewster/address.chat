@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"address.chat/api/auth"
+	"github.com/gorilla/websocket"
 )
 
 type ChallengeRequest struct {
@@ -67,8 +68,40 @@ func signinWrapper(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+} // use default options
+func wsHandler(w http.ResponseWriter, r *http.Request) {
+	c, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Print("upgrade:", err)
+		return
+	}
+	defer c.Close()
+	for {
+		mt, message, err := c.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			break
+		}
+		log.Printf("recv: %s", message)
+		err = c.WriteMessage(mt, message)
+		if err != nil {
+			log.Println("write:", err)
+			break
+		}
+	}
+}
+
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("ok"))
+}
+
 func main() {
 	const address = "localhost:8080"
+	http.HandleFunc("/readyz", healthCheckHandler)
+	http.HandleFunc("/alivez", healthCheckHandler)
+	http.HandleFunc("/ws", wsHandler)
 	http.HandleFunc("/auth/challenge", challengeWrapper)
 	http.HandleFunc("/auth/signin", signinWrapper)
 	log.Printf("listening on %s...\n", address)
