@@ -5,19 +5,15 @@
 	const ethereum = (window as any).ethereum;
     let token: string | null = null;
     
-    console.log("signin w/ address", address);
-    fetch(`http://localhost:8080/auth/signin`, {
-        method: "POST",
-        body: JSON.stringify({Address: address, Challenge: challenge, Signature: "hello"}),
-    }).then(async (resp) => {
-        console.log(resp);
-        token = (await resp.json()).Token;
-    })
-    /*
-	ethereum.request({ method: "personal_sign", params: [challenge, account]}).then((signed) => {
-        console.log(signed)
-	})
-    */
+	ethereum.request({ method: "personal_sign", params: [challenge, address]}).then((signature) => {
+        return fetch(`http://localhost:8080/auth/signin`, {
+            method: "POST",
+            body: JSON.stringify({Address: address, Challenge: challenge, Signature: signature}),
+        }).then(async (resp) => {
+            console.log(resp);
+            token = (await resp.json()).Token;
+        })
+    });
 </script>
 
 {#if !token}
