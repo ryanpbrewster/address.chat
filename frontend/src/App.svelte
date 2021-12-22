@@ -6,21 +6,35 @@
     readonly expiresAt: number;
   }
 
+  const TOKEN_PATH = "token";
+
   const ethereum = (window as any).ethereum;
   let address: string | null = null;
   let token: string | null = null;
+
+  $: if (!address) {
+    console.log("automatically checking for available accounts");
+    ethereum.request({ method: "eth_accounts" }).then((accounts) => {
+      console.log("automatically fetched accounts: ", accounts);
+      address = accounts[0] || null;
+    });
+  } else if (!token) {
+    token = localStorage.getItem(`${address}.${TOKEN_PATH}`) || null;
+  }
+
   async function requestAccounts() {
     const accounts = await ethereum.request({ method: "eth_requestAccounts" });
     address = accounts[0];
   }
   async function signToken(address: string) {
-	const payload: AuthPayload = {address, expiresAt: Date.now() + 3_600_000 };
-	const body = JSON.stringify(payload);
+    const payload: AuthPayload = { address, expiresAt: Date.now() + 3_600_000 };
+    const body = JSON.stringify(payload);
     const signature = await ethereum.request({
       method: "personal_sign",
       params: [body, address],
     });
-	token = JSON.stringify({payload, signature});
+    token = JSON.stringify({ payload: body, signature });
+    localStorage.setItem(`${address}.${TOKEN_PATH}`, token);
   }
 </script>
 

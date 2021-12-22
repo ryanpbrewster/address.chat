@@ -1,13 +1,19 @@
 package protocol
 
 type AuthRequest struct {
-	Address   string
-	Challenge string
-	Signature string
+	Payload   string `json:"payload"`
+	Signature string `json:"signature"`
+}
+type AuthPayload struct {
+	Address   string `json:"address"`
+	ExpiresAt int    `json:"expiresAt"`
+}
+type AuthResponse struct {
+	AuthenticatedUntil int `json:"authenticatedUntil"`
 }
 
 type SendRequest struct {
-	From    string
-	To      string
-	Content string
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Content string `json:"content"`
 }

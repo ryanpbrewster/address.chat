@@ -38,14 +38,24 @@ func wsDriver(c *websocket.Conn) error {
 		switch mt {
 		case websocket.TextMessage:
 			if address == "" {
-				var payload protocol.AuthRequest
-				if err := json.Unmarshal(message, &payload); err != nil {
+				var request protocol.AuthRequest
+				if err := json.Unmarshal(message, &request); err != nil {
 					return fmt.Errorf("invalid AuthRequest: %s", err)
 				}
-				if err := auth.VerifySignature(payload.Address, payload.Challenge, payload.Signature); err != nil {
+				log.Println("AuthRequest:", request)
+				var payload protocol.AuthPayload
+				if err := json.Unmarshal([]byte(request.Payload), &payload); err != nil {
+					return fmt.Errorf("invalid AuthRequest.Payload: %s", err)
+				}
+				if err := auth.VerifySignature(payload.Address, request.Payload, request.Signature); err != nil {
 					return fmt.Errorf("could not verify signature: %s", err)
 				}
+				// TODO: check payload.ExpiresAt
 				address = payload.Address
+				response := protocol.AuthResponse{AuthenticatedUntil: payload.ExpiresAt}
+				if err := c.WriteJSON(response); err != nil {
+					return fmt.Errorf("could not write response: %s", err)
+				}
 			} else {
 				var payload protocol.SendRequest
 				if err := json.Unmarshal(message, &payload); err != nil {
