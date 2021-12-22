@@ -1,8 +1,10 @@
 <script type="ts">
+import App from "./App.svelte";
+
   export let address: string;
   export let token: string;
 
-  const ws = new WebSocket("ws://localhost:8080/ws");
+  const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
   let authenticatedUntil: number | null = null;
   ws.onopen = (evt) => {
     console.log("[OPEN]", evt);
@@ -33,8 +35,9 @@
   }
 </script>
 
-{#if authenticatedUntil}
-  <textarea placeholder="Type message here" on:keypress={keypressHandler} />
-{:else}
-  <h1>Connecting...</h1>
-{/if}
+<h1>Signed in as {address}</h1>
+<textarea
+  placeholder={authenticatedUntil ? "Type message here" : "Connecting...."}
+  disabled={!authenticatedUntil}
+  on:keypress={keypressHandler}
+/>
