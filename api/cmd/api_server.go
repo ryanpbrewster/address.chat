@@ -5,92 +5,68 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 
 	"address.chat/api/auth"
+	"address.chat/api/protocol"
 	"github.com/gorilla/websocket"
 )
 
-type ChallengeRequest struct {
-	Address string
-}
-type ChallengeResponse struct {
-	Challenge string
-}
-
-func challengeWrapper(w http.ResponseWriter, r *http.Request) {
-	log.Printf("recv %q @ %q", r.Method, r.URL.Path)
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	var incoming ChallengeRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&incoming); err != nil {
-		http.Error(w, fmt.Sprintf("invalid request: %s", err), http.StatusBadRequest)
-		return
-	}
-	log.Printf("[AUTH/CHALLENGE] parsed %q", incoming)
-	resp := ChallengeResponse{Challenge: fmt.Sprintf("it is %s", time.Now().UTC())}
-	outgoing, err := json.Marshal(resp)
-	if err != nil {
-		log.Fatalf("could not serialize response: %s", err)
-	}
-	if _, err := w.Write(outgoing); err != nil {
-		log.Fatalf("could not write response: %s", err)
-	}
-}
-
-type SignInRequest struct {
-	Address   string
-	Challenge string
-	Signature string
-}
-type SignInResponse struct {
-	Token string
-}
-
-func signinWrapper(w http.ResponseWriter, r *http.Request) {
-	log.Printf("recv %q @ %q", r.Method, r.URL.Path)
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	var incoming SignInRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&incoming); err != nil {
-		http.Error(w, fmt.Sprintf("invalid request: %s", err), http.StatusBadRequest)
-		return
-	}
-	log.Printf("[AUTH/SIGNIN] parsed %q", incoming)
-	if err := auth.VerifySignature(incoming.Address, incoming.Challenge, incoming.Signature); err != nil {
-		http.Error(w, fmt.Sprintf("unknown error: %s", err), http.StatusInternalServerError)
-		return
-	}
-	outgoing, err := json.Marshal(SignInResponse{Token: "put token here"})
-	if err != nil {
-		log.Fatalf("could not serialize response: %s", err)
-	}
-	if _, err := w.Write(outgoing); err != nil {
-		log.Fatalf("could not write response: %s", err)
-	}
-}
-
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
-} // use default options
+}
+
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Print("upgrade:", err)
+		log.Println("upgrade:", err)
 		return
 	}
 	defer c.Close()
+	if err := wsDriver(c); err != nil {
+		c.WriteMessage(websocket.TextMessage, []byte(err.Error()))
+	}
+}
+func wsDriver(c *websocket.Conn) error {
+	var address string
 	for {
 		mt, message, err := c.ReadMessage()
 		if err != nil {
 			log.Println("read:", err)
-			break
+			return err
 		}
-		log.Printf("recv: %s", message)
-		err = c.WriteMessage(mt, message)
-		if err != nil {
-			log.Println("write:", err)
-			break
+		log.Printf("recv: %q %s", mt, message)
+		switch mt {
+		case websocket.TextMessage:
+			if address == "" {
+				var payload protocol.AuthRequest
+				if err := json.Unmarshal(message, &payload); err != nil {
+					return fmt.Errorf("invalid AuthRequest: %s", err)
+				}
+				if err := auth.VerifySignature(payload.Address, payload.Challenge, payload.Signature); err != nil {
+					return fmt.Errorf("could not verify signature: %s", err)
+				}
+				address = payload.Address
+			} else {
+				var payload protocol.SendRequest
+				if err := json.Unmarshal(message, &payload); err != nil {
+					return fmt.Errorf("invalid SendRequest: %s", err)
+				}
+				log.Println("user asked us to send a message", payload)
+			}
+		case websocket.BinaryMessage:
+			log.Println("unexpected binary message", message)
+			return fmt.Errorf("unexpected binary message")
+		case websocket.CloseMessage:
+			log.Println("client requesting close", message)
+			return nil
+		case websocket.PingMessage:
+			log.Println("client ping", message)
+			c.WriteMessage(websocket.PongMessage, []byte{})
+		case websocket.PongMessage:
+			log.Println("ignoring client pong", message)
 		}
 	}
+
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -102,8 +78,6 @@ func main() {
 	http.HandleFunc("/readyz", healthCheckHandler)
 	http.HandleFunc("/alivez", healthCheckHandler)
 	http.HandleFunc("/ws", wsHandler)
-	http.HandleFunc("/auth/challenge", challengeWrapper)
-	http.HandleFunc("/auth/signin", signinWrapper)
 	log.Printf("listening on %s...\n", address)
 	log.Fatal(http.ListenAndServe(address, nil))
 }
