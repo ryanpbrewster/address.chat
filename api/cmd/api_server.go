@@ -18,14 +18,14 @@ var upgrader = websocket.Upgrader{
 }
 
 func wsHandler(router *actor.Router, w http.ResponseWriter, r *http.Request) {
-	c, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("upgrade:", err)
 		return
 	}
-	defer c.Close()
-	if err := wsDriver(router, c); err != nil {
-		c.WriteMessage(websocket.TextMessage, []byte(err.Error()))
+	defer conn.Close()
+	if err := wsDriver(router, conn); err != nil {
+		conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
 	}
 }
 func wsDriver(router *actor.Router, conn *websocket.Conn) error {
@@ -36,6 +36,9 @@ func wsDriver(router *actor.Router, conn *websocket.Conn) error {
 	conn.WriteJSON(protocol.AuthResponse{AuthenticatedUntil: 1})
 
 	a := router.Get(address)
+	id, ch := a.Subscribe()
+	defer a.Unsubscribe(id)
+
 	errCh := make(chan error)
 	go func() {
 		err := readPump(conn, a.Incoming)
@@ -46,7 +49,6 @@ func wsDriver(router *actor.Router, conn *websocket.Conn) error {
 		}
 	}()
 	go func() {
-		ch := a.Subscribe()
 		err := writePump(conn, ch)
 		log.Println("write pump:", err)
 		select {
@@ -132,7 +134,7 @@ func writePump(conn *websocket.Conn, ch chan protocol.SendRequest) error {
 		m, ok := <-ch
 		// TODO: batch outgoing messages
 		if !ok {
-			return conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return nil
 		}
 		if err := conn.WriteJSON(m); err != nil {
 			return err

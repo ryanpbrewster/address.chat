@@ -24,7 +24,7 @@ func (router *Router) Get(address string) *Actor {
 	defer router.lock.Unlock()
 	a, ok := router.actors[address]
 	if !ok {
-		a = newActor()
+		a = newActor(address)
 		go a.loop()
 		router.actors[address] = a
 	}
@@ -32,14 +32,16 @@ func (router *Router) Get(address string) *Actor {
 }
 
 type Actor struct {
+	address     string
 	Incoming    chan protocol.SendRequest
 	lock        *sync.Mutex
 	nextId      int
 	subscribers map[int]chan protocol.SendRequest
 }
 
-func newActor() *Actor {
+func newActor(address string) *Actor {
 	return &Actor{
+		address:     address,
 		Incoming:    make(chan protocol.SendRequest),
 		lock:        &sync.Mutex{},
 		nextId:      0,
@@ -53,13 +55,28 @@ func (a *Actor) loop() {
 	}
 }
 
-func (a *Actor) Subscribe() chan protocol.SendRequest {
+func (a *Actor) Subscribe() (int, chan protocol.SendRequest) {
 	a.lock.Lock()
 	defer a.lock.Unlock()
-	ch := make(chan protocol.SendRequest)
-	a.subscribers[a.nextId] = ch
+
+	id := a.nextId
 	a.nextId++
-	return ch
+
+	ch := make(chan protocol.SendRequest)
+	a.subscribers[id] = ch
+
+	log.Printf("%s has %d subscribers", a.address, len(a.subscribers))
+	return id, ch
+}
+
+func (a *Actor) Unsubscribe(id int) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	ch, ok := a.subscribers[id]
+	if ok {
+		delete(a.subscribers, id)
+		close(ch)
+	}
 }
 
 func (a *Actor) fanout(m protocol.SendRequest) {
