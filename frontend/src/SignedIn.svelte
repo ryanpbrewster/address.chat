@@ -1,6 +1,4 @@
 <script type="ts">
-  import App from "./App.svelte";
-
   export let address: string;
   export let token: string;
 
