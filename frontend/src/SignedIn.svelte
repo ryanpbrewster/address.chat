@@ -64,8 +64,9 @@
     tryFlush();
   }
   async function tryFlush() {
-    if (authenticatedUntil && partialRecipient && content) {
-      ws.send(JSON.stringify({ from: address, to: recipients[0], content }));
+    if (authenticatedUntil && recipients.length > 0 && content) {
+      // TODO: update protocol to support multiple recipients
+      ws.send(JSON.stringify({ from: address, to: recipients[0].address, content }));
       content = "";
     }
   }
