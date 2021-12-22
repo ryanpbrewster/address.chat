@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"address.chat/api/actor"
 	"address.chat/api/auth"
@@ -151,7 +152,11 @@ func main() {
 		wsHandler(router, w, r)
 	})
 
-	const address = "localhost:8080"
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	address := fmt.Sprintf("0.0.0.0:%s", port)
 	log.Printf("listening on %s...\n", address)
 	log.Fatal(http.ListenAndServe(address, nil))
 }
