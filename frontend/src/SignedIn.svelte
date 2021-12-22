@@ -2,8 +2,19 @@
   export let address: string;
   export let token: string;
 
-  import { ethers } from 'ethers';
+  interface Mailbox {
+    readonly address: string;
+    readonly name?: string;
+  }
+
+  import { ethers } from "ethers";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
+
+  let author: Mailbox = { address };
+  provider.lookupAddress(address).then((name) => {
+    console.log("rev lookup", address, "=", name);
+    author = { ...author, name };
+  });
 
   const ws = new WebSocket("ws://localhost:8080/ws");
   let authenticatedUntil: number | null = null;
@@ -25,52 +36,84 @@
   ws.onerror = (evt) => console.log("[ERROR]", evt);
   ws.onclose = (evt) => console.log("[CLOSE]", evt);
 
-  let recipient = "";
-  let resolvingName = false;
+  const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
+  const ENS_REGEX = /^([a-z]+\.)+eth$/;
+
+  let recipients: readonly Mailbox[] = [];
+  let partialRecipient: string = "";
   async function toHandler(evt: KeyboardEvent) {
     if (evt.key !== "Enter") return;
-    if (resolvingName) return;
-    const target = evt.target as HTMLInputElement;
-    resolvingName = true;
-    try {
-      recipient = await provider.resolveName(recipient);
-    } finally {
-      resolvingName = false;
+    let recipient: Mailbox | null = null;
+    if (ENS_REGEX.test(partialRecipient)) {
+      const address = await provider.resolveName(partialRecipient);
+      recipient = address ? { address, name: partialRecipient } : null;
+    } else if (ADDRESS_REGEX.test(partialRecipient)) {
+      const name = await provider.lookupAddress(partialRecipient);
+      recipient = { address: partialRecipient, name };
+    }
+    if (recipient) {
+      recipients = [...recipients, recipient];
+      partialRecipient = "";
     }
   }
+
   let content = "";
   function contentHandler(evt: KeyboardEvent) {
-    if (evt.ctrlKey && evt.key === "Enter") {
-      tryFlush();
-    }
+    if (evt.key !== "Enter") return;
+    if (!evt.ctrlKey) return;
+    tryFlush();
   }
   async function tryFlush() {
-    if (authenticatedUntil && recipient && content) {
-      ws.send(
-        JSON.stringify({ from: address, to: recipient, content})
-      );
+    if (authenticatedUntil && partialRecipient && content) {
+      ws.send(JSON.stringify({ from: address, to: recipients[0], content }));
       content = "";
     }
   }
 </script>
 
 <div class="center">
-<h1>Signed in as {address}</h1>
-<input
-  type="text"
-  placeholder="ryanbrewster.eth"
-  bind:value={recipient}
-  disabled={!authenticatedUntil || resolvingName}
-  on:keypress={toHandler}
-/>
+  <table>
+    <tbody>
+      <tr
+        ><td>From:</td><td
+          >{author.name
+            ? `${author.name} <${author.address}>`
+            : author.address}</td
+        ></tr
+      >
+      <tr
+        ><td>To:</td><td>
+          <div>
+            {#each recipients as recipient}
+              <p>
+                {recipient.name
+                  ? `${recipient.name} <${recipient.address}>`
+                  : recipient.address}
+              </p>
+            {/each}
+            <input
+              type="text"
+              placeholder="ryanbrewster.eth"
+              bind:value={partialRecipient}
+              on:keypress={toHandler}
+            />
+          </div>
+        </td></tr
+      >
+    </tbody>
+  </table>
 
-<textarea
-  placeholder={authenticatedUntil ? "Type message here" : "Connecting...."}
-  disabled={!authenticatedUntil}
-  bind:value={content}
-  on:keypress={contentHandler}
-/>
-<button disabled={recipient === "" || content === ""}>Send</button>
+  <textarea
+    placeholder={authenticatedUntil ? "Type message here" : "Connecting...."}
+    disabled={!authenticatedUntil}
+    bind:value={content}
+    on:keypress={contentHandler}
+  />
+  <button
+    disabled={partialRecipient.length > 0 ||
+      recipients.length === 0 ||
+      content.length === 0}>Send</button
+  >
 </div>
 
 <style>
@@ -78,5 +121,11 @@
     display: flex;
     flex-direction: column;
     max-width: 640px;
+  }
+  table {
+    text-align: left;
+  }
+  input {
+    width: 30em;
   }
 </style>
