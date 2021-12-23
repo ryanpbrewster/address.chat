@@ -8,6 +8,8 @@
   }
 
   import { ethers } from "ethers";
+  import Mailbox from "./Mailbox.svelte";
+  import Chip from "./Chip.svelte";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
@@ -40,6 +42,9 @@
   const ENS_REGEX = /^([a-z]+\.)+eth$/;
 
   let recipients: readonly Mailbox[] = [];
+  function deleteRecipient(i: number) {
+    recipients = [...recipients.slice(0, i), ...recipients.slice(i + 1)];
+  }
   let partialRecipient: string = "";
   async function toHandler(evt: KeyboardEvent) {
     if (evt.key !== "Enter") return;
@@ -66,7 +71,9 @@
   async function tryFlush() {
     if (authenticatedUntil && recipients.length > 0 && content) {
       // TODO: update protocol to support multiple recipients
-      ws.send(JSON.stringify({ from: address, to: recipients[0].address, content }));
+      ws.send(
+        JSON.stringify({ from: address, to: recipients[0].address, content })
+      );
       content = "";
     }
   }
@@ -77,20 +84,19 @@
     <tbody>
       <tr
         ><td>From:</td><td
-          >{author.name
-            ? `${author.name} <${author.address}>`
-            : author.address}</td
-        ></tr
+          ><Mailbox name={author.name} address={author.address} />
+        </td></tr
       >
       <tr
         ><td>To:</td><td>
           <div>
-            {#each recipients as recipient}
-              <p>
-                {recipient.name
-                  ? `${recipient.name} <${recipient.address}>`
-                  : recipient.address}
-              </p>
+            {#each recipients as recipient, i}
+              <Chip onDelete={() => deleteRecipient(i)}
+                ><Mailbox
+                  name={recipient.name}
+                  address={recipient.address}
+                /></Chip
+              >
             {/each}
             <input
               type="text"
