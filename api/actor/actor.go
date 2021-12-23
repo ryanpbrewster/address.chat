@@ -2,94 +2,69 @@ package actor
 
 import (
 	"log"
-	"sync"
 
 	"address.chat/api/protocol"
 )
 
-type Router struct {
-	lock   sync.Mutex
-	actors map[string]*Actor
+type Hub struct {
+	Send        chan protocol.Message
+	Subscribe   chan SubscribeRequest
+	Unsubscribe chan UnsubscribeRequest
+	subs        map[string]map[chan protocol.Message]bool
+}
+type SubscribeRequest struct {
+	Address string
+	Ch      chan protocol.Message
+}
+type UnsubscribeRequest struct {
+	Address string
+	Ch      chan protocol.Message
 }
 
-func NewRouter() *Router {
-	return &Router{
-		lock:   sync.Mutex{},
-		actors: map[string]*Actor{},
+func NewHub() *Hub {
+	return &Hub{
+		Send:        make(chan protocol.Message),
+		Subscribe:   make(chan SubscribeRequest),
+		Unsubscribe: make(chan UnsubscribeRequest),
+		subs:        make(map[string]map[chan protocol.Message]bool),
 	}
 }
 
-func (router *Router) Get(address string) *Actor {
-	router.lock.Lock()
-	defer router.lock.Unlock()
-	a, ok := router.actors[address]
-	if !ok {
-		a = newActor(address)
-		go a.loop()
-		router.actors[address] = a
-	}
-	return a
-}
-
-type Actor struct {
-	address     string
-	Incoming    chan protocol.SendRequest
-	lock        *sync.Mutex
-	nextId      int
-	subscribers map[int]chan protocol.SendRequest
-}
-
-func newActor(address string) *Actor {
-	return &Actor{
-		address:     address,
-		Incoming:    make(chan protocol.SendRequest),
-		lock:        &sync.Mutex{},
-		nextId:      0,
-		subscribers: map[int]chan protocol.SendRequest{},
-	}
-}
-
-func (a *Actor) loop() {
-	for m := range a.Incoming {
-		a.fanout(m)
-	}
-}
-
-func (a *Actor) Subscribe() (int, chan protocol.SendRequest) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	id := a.nextId
-	a.nextId++
-
-	ch := make(chan protocol.SendRequest)
-	a.subscribers[id] = ch
-
-	log.Printf("%s has %d subscribers", a.address, len(a.subscribers))
-	return id, ch
-}
-
-func (a *Actor) Unsubscribe(id int) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	ch, ok := a.subscribers[id]
-	if ok {
-		delete(a.subscribers, id)
-		close(ch)
-	}
-}
-
-func (a *Actor) fanout(m protocol.SendRequest) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-	for id, ch := range a.subscribers {
+func (hub *Hub) Loop() {
+	for {
 		select {
-		case ch <- m:
-			log.Println("fanned out to subscriber:", id)
-		default:
-			log.Println("dead subscriber:", id)
-			delete(a.subscribers, id)
-			close(ch)
+		case msg := <-hub.Send:
+			for _, address := range msg.To {
+				log.Printf("fanning out msg from %s to %s", msg.From, address)
+				hub.fanout(msg, address)
+			}
+		case req := <-hub.Subscribe:
+			subs, ok := hub.subs[req.Address]
+			if !ok {
+				subs = make(map[chan protocol.Message]bool)
+				hub.subs[req.Address] = subs
+			}
+			subs[req.Ch] = true
+		case req := <-hub.Unsubscribe:
+			if subs, ok := hub.subs[req.Address]; ok {
+				if _, ok := subs[req.Ch]; ok {
+					delete(subs, req.Ch)
+					close(req.Ch)
+				}
+			}
+		}
+	}
+}
+
+func (hub *Hub) fanout(msg protocol.Message, address string) {
+	if subs, ok := hub.subs[address]; ok {
+		for ch := range subs {
+			select {
+			case ch <- msg:
+			default:
+				delete(subs, ch)
+				close(ch)
+			}
 		}
 	}
 }

@@ -17,7 +17,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func wsHandler(router *actor.Router, w http.ResponseWriter, r *http.Request) {
+func wsHandler(router *actor.Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("upgrade:", err)
@@ -28,20 +28,22 @@ func wsHandler(router *actor.Router, w http.ResponseWriter, r *http.Request) {
 		conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
 	}
 }
-func wsDriver(router *actor.Router, conn *websocket.Conn) error {
+func wsDriver(hub *actor.Hub, conn *websocket.Conn) error {
 	address, err := awaitAddress(conn)
 	if err != nil {
 		return err
 	}
 	conn.WriteJSON(protocol.AuthResponse{AuthenticatedUntil: 1})
 
-	a := router.Get(address)
-	id, ch := a.Subscribe()
-	defer a.Unsubscribe(id)
+	ch := make(chan protocol.Message)
+	hub.Subscribe <- actor.SubscribeRequest{Address: address, Ch: ch}
+	defer func() {
+		hub.Unsubscribe <- actor.UnsubscribeRequest{Address: address, Ch: ch}
+	}()
 
 	errCh := make(chan error)
 	go func() {
-		err := readPump(conn, a.Incoming)
+		err := readPump(conn, address, hub.Send)
 		log.Println("read pump:", err)
 		select {
 		case errCh <- err:
@@ -98,7 +100,7 @@ func awaitAddress(conn *websocket.Conn) (string, error) {
 	}
 }
 
-func readPump(conn *websocket.Conn, ch chan protocol.SendRequest) error {
+func readPump(conn *websocket.Conn, address string, ch chan protocol.Message) error {
 	for {
 		mt, message, err := conn.ReadMessage()
 		if err != nil {
@@ -113,7 +115,11 @@ func readPump(conn *websocket.Conn, ch chan protocol.SendRequest) error {
 				return fmt.Errorf("invalid SendRequest: %s", err)
 			}
 			log.Println("user asked us to send a message", payload)
-			ch <- payload
+			ch <- protocol.Message{
+				From:    address,
+				To:      payload.To,
+				Content: payload.Content,
+			}
 		case websocket.BinaryMessage:
 			log.Println("unexpected binary message", message)
 			return fmt.Errorf("unexpected binary message")
@@ -129,7 +135,7 @@ func readPump(conn *websocket.Conn, ch chan protocol.SendRequest) error {
 	}
 }
 
-func writePump(conn *websocket.Conn, ch chan protocol.SendRequest) error {
+func writePump(conn *websocket.Conn, ch chan protocol.Message) error {
 	for {
 		m, ok := <-ch
 		// TODO: batch outgoing messages
@@ -147,11 +153,12 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	router := actor.NewRouter()
+	hub := actor.NewHub()
+	go hub.Loop()
 	http.HandleFunc("/readyz", healthCheckHandler)
 	http.HandleFunc("/alivez", healthCheckHandler)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		wsHandler(router, w, r)
+		wsHandler(hub, w, r)
 	})
 
 	port := os.Getenv("PORT")

@@ -72,7 +72,7 @@
     if (authenticatedUntil && recipients.length > 0 && content) {
       // TODO: update protocol to support multiple recipients
       ws.send(
-        JSON.stringify({ from: address, to: recipients[0].address, content })
+        JSON.stringify({ from: address, to: recipients.map((m) => m.address), content })
       );
       content = "";
     }
