@@ -1,8 +1,6 @@
 package actor
 
 import (
-	"log"
-
 	"address.chat/api/protocol"
 )
 
@@ -35,8 +33,16 @@ func (hub *Hub) Loop() {
 		select {
 		case msg := <-hub.Send:
 			for _, address := range msg.To {
-				log.Printf("fanning out msg from %s to %s", msg.From, address)
-				hub.fanout(msg, address)
+				if subs, ok := hub.subs[address]; ok {
+					for ch := range subs {
+						select {
+						case ch <- msg:
+						default:
+							delete(subs, ch)
+							close(ch)
+						}
+					}
+				}
 			}
 		case req := <-hub.Subscribe:
 			subs, ok := hub.subs[req.Address]
@@ -51,19 +57,6 @@ func (hub *Hub) Loop() {
 					delete(subs, req.Ch)
 					close(req.Ch)
 				}
-			}
-		}
-	}
-}
-
-func (hub *Hub) fanout(msg protocol.Message, address string) {
-	if subs, ok := hub.subs[address]; ok {
-		for ch := range subs {
-			select {
-			case ch <- msg:
-			default:
-				delete(subs, ch)
-				close(ch)
 			}
 		}
 	}
