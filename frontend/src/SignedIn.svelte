@@ -42,8 +42,6 @@
   import { ethers } from "ethers";
   import Mailbox from "./Mailbox.svelte";
   import Chip from "./Chip.svelte";
-import { get } from "svelte/store";
-import App from "./App.svelte";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
@@ -51,8 +49,8 @@ import App from "./App.svelte";
     author = { ...author, name };
   });
 
-  // const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
-  const ws = new WebSocket("ws://localhost:8080/ws");
+  const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
+  // const ws = new WebSocket("ws://localhost:8080/ws");
   let authenticatedUntil: number | null = null;
   let messages: readonly Message[] = [];
   $: groupedMessages = groupMessages(messages);
