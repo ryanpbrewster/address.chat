@@ -11,15 +11,43 @@
     readonly to: readonly string[];
     readonly content: string;
   }
+  interface Group {
+    readonly members: readonly string[];
+  }
+  interface GroupedMessages {
+    readonly group: Group;
+    readonly messages: readonly Message[];
+  }
+  function extractGroup(message: Message): Group {
+    const members = [...new Set([message.from, ...message.to])].sort();
+    return { members };
+  }
+  function groupKey(group: Group): string {
+    return group.members.join(":")
+  }
+  function groupMessages(messages: readonly Message[]): Map<string, GroupedMessages> {
+    const grouped = new Map();
+    for (const msg of messages) {
+      const group = extractGroup(msg);
+      const key = groupKey(group);
+      const cur = grouped.get(key)
+      const updated: GroupedMessages = cur
+        ? { group, messages: [...cur.messages, msg] }
+        : { group, messages: [msg]};
+        grouped.set(key, updated);
+    }
+    return grouped;
+  }
 
   import { ethers } from "ethers";
   import Mailbox from "./Mailbox.svelte";
   import Chip from "./Chip.svelte";
+import { get } from "svelte/store";
+import App from "./App.svelte";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
   provider.lookupAddress(address).then((name) => {
-    console.log("rev lookup", address, "=", name);
     author = { ...author, name };
   });
 
@@ -27,6 +55,8 @@
   const ws = new WebSocket("ws://localhost:8080/ws");
   let authenticatedUntil: number | null = null;
   let messages: readonly Message[] = [];
+  $: groupedMessages = groupMessages(messages);
+  let selectedGroup: string | null = null;
   ws.onopen = (evt) => {
     console.log("[OPEN]", evt);
     ws.send(token);
@@ -88,10 +118,17 @@
   }
 </script>
 
-<div>
-  {#each messages as m}
-  <p>{m.from} -> {m.to}: {m.content}</p>
-  {/each}
+<div class="body">
+  <div class="leftnav">
+    {#each [...groupedMessages] as [key, grouped]}
+    <div class="navitem" on:click={() => selectedGroup = key}>{grouped.group.members}</div>
+    {/each}
+  </div>
+  <div class="messages">
+    {#each [...(groupedMessages.get(selectedGroup)?.messages ?? [])] as m}
+    <p>{m.from}: {m.content}</p>
+    {/each}
+  </div>
 </div>
 <div class="center">
   <table>
@@ -138,6 +175,28 @@
 </div>
 
 <style>
+  .body {
+    display: flex;
+    flex-direction: row;
+  }
+  .leftnav {
+    display: flex;
+    flex-direction: column;
+    width: 240px;
+    padding: 16px;
+    border: solid 1px black;
+    overflow: auto;
+  }
+  .navitem {
+    border: solid 1px lightgray;
+    padding: 4px;
+    border-radius: 4px;
+  }
+  .messages {
+    display: flex;
+    flex-direction: column;
+    width: 680px;
+  }
   .center {
     display: flex;
     flex-direction: column;
