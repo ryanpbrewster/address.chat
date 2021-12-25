@@ -164,9 +164,23 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	nc, err := nats.Connect("nats://address-chat-nats.internal:4222")
+	// nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
 		log.Fatalf("could not connect to nats: %s", err)
 	}
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalf("could not connect to jetstream: %s", err)
+	}
+	info, err := js.AddStream(&nats.StreamConfig{
+		Name:     "MESSAGES",
+		Subjects: []string{"MESSAGES.*"},
+	})
+	if err != nil {
+		log.Fatalf("could not create stream: %s", err)
+	}
+	log.Println("created stream:", info)
+
 	http.HandleFunc("/readyz", healthCheckHandler)
 	http.HandleFunc("/alivez", healthCheckHandler)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
