@@ -29,6 +29,7 @@ func wsHandler(nc *nats.Conn, w http.ResponseWriter, r *http.Request) {
 func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 	address, err := awaitAddress(conn)
 	if err != nil {
+		log.Println("await address:", err)
 		return
 	}
 	conn.WriteJSON(protocol.AuthResponse{AuthenticatedUntil: 1})
@@ -162,7 +163,7 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	nc, err := nats.Connect(nats.DefaultURL)
+	nc, err := nats.Connect("nats://address-chat-nats.internal:4222")
 	if err != nil {
 		log.Fatalf("could not connect to nats: %s", err)
 	}

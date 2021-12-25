@@ -18,7 +18,7 @@
     author = { ...author, name };
   });
 
-  const ws = new WebSocket("ws://localhost:8080/ws");
+  const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
   let authenticatedUntil: number | null = null;
   ws.onopen = (evt) => {
     console.log("[OPEN]", evt);

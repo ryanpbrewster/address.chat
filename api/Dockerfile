@@ -4,7 +4,7 @@ WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build ./cmd/api_server.go
+RUN go build ./cmd/api_server/api_server.go
 
 FROM debian:buster AS runner
 RUN mkdir /app
