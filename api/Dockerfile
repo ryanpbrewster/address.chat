@@ -9,4 +9,4 @@ RUN go build ./cmd/api_server/api_server.go
 FROM debian:buster AS runner
 RUN mkdir /app
 COPY --from=builder /workspace/api_server /app/api_server
-ENTRYPOINT ["/app/api_server"]
+ENTRYPOINT ["/app/api_server", "--nats=nats://address-chat-nats.internal:4222"]

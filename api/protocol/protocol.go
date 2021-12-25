@@ -22,3 +22,12 @@ type Message struct {
 	To      []string `json:"to"`
 	Content string   `json:"content"`
 }
+
+func (m Message) Participants() map[string]bool {
+	ps := make(map[string]bool)
+	ps[m.From] = true
+	for _, addr := range m.To {
+		ps[addr] = true
+	}
+	return ps
+}

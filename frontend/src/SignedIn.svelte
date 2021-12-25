@@ -6,6 +6,11 @@
     readonly address: string;
     readonly name?: string;
   }
+  interface Message {
+    readonly from: string;
+    readonly to: readonly string[];
+    readonly content: string;
+  }
 
   import { ethers } from "ethers";
   import Mailbox from "./Mailbox.svelte";
@@ -18,9 +23,10 @@
     author = { ...author, name };
   });
 
-  const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
-  // const ws = new WebSocket("ws://localhost:8080/ws");
+  // const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
+  const ws = new WebSocket("ws://localhost:8080/ws");
   let authenticatedUntil: number | null = null;
+  let messages: readonly Message[] = [];
   ws.onopen = (evt) => {
     console.log("[OPEN]", evt);
     ws.send(token);
@@ -31,6 +37,8 @@
       const msg = JSON.parse(evt.data);
       if (typeof msg.authenticatedUntil === "number") {
         authenticatedUntil = msg.authenticatedUntil || null;
+      } else {
+        messages = [...messages, msg];
       }
     } catch (e) {
       console.error(e);
@@ -80,6 +88,11 @@
   }
 </script>
 
+<div>
+  {#each messages as m}
+  <p>{m.from} -> {m.to}: {m.content}</p>
+  {/each}
+</div>
 <div class="center">
   <table>
     <tbody>

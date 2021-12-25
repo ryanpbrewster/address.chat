@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -62,10 +63,7 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 				if err != nil {
 					log.Fatalf("could not marshall msg: %s", err)
 				}
-				if err := nc.Publish(fmt.Sprintf("MESSAGES.%s", msg.From), data); err != nil {
-					log.Fatalf("could not publish to nats: %s", err)
-				}
-				for _, addr := range msg.To {
+				for addr := range msg.Participants() {
 					if err := nc.Publish(fmt.Sprintf("MESSAGES.%s", addr), data); err != nil {
 						log.Fatalf("could not publish to nats: %s", err)
 					}
@@ -99,6 +97,7 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 		if err != nil {
 			log.Fatalf("could not subscribe to MESSAGES: %s", err)
 		}
+		log.Println("subscribed to:", subj)
 		for {
 			message, err := sub.NextMsg(1 * time.Second)
 			if err == nats.ErrTimeout {
@@ -107,6 +106,11 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 			if err != nil {
 				log.Fatalf("unexpected error reading from nats: %s", err)
 			}
+			meta, err := message.Metadata()
+			if err != nil {
+				log.Fatalf("unexpected metadata error: %s", err)
+			}
+			log.Println("received nats message:", meta)
 			var msg protocol.Message
 			if err := json.Unmarshal(message.Data, &msg); err != nil {
 				log.Fatalf("could not decode message: %s", err)
@@ -114,6 +118,9 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Println("write to websocket:", err)
 				return
+			}
+			if err := message.AckSync(); err != nil {
+				log.Println("ack:", err)
 			}
 		}
 	}()
@@ -163,8 +170,8 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	nc, err := nats.Connect("nats://address-chat-nats.internal:4222")
-	// nc, err := nats.Connect(nats.DefaultURL)
+	natsUrl := flag.String("nats", nats.DefaultURL, "the url for the NATS cluster")
+	nc, err := nats.Connect(*natsUrl)
 	if err != nil {
 		log.Fatalf("could not connect to nats: %s", err)
 	}
