@@ -6,44 +6,86 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	"address.chat/api/actor"
 	"address.chat/api/auth"
 	"address.chat/api/protocol"
 	"github.com/gorilla/websocket"
+	"github.com/nats-io/nats.go"
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-func wsHandler(router *actor.Hub, w http.ResponseWriter, r *http.Request) {
+func wsHandler(nc *nats.Conn, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("upgrade:", err)
 		return
 	}
 	defer conn.Close()
-	if err := wsDriver(router, conn); err != nil {
+	if err := wsDriver(nc, conn); err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
 	}
 }
-func wsDriver(hub *actor.Hub, conn *websocket.Conn) error {
+func wsDriver(nc *nats.Conn, conn *websocket.Conn) error {
 	address, err := awaitAddress(conn)
 	if err != nil {
 		return err
 	}
 	conn.WriteJSON(protocol.AuthResponse{AuthenticatedUntil: 1})
 
-	ch := make(chan protocol.Message)
-	hub.Subscribe <- actor.SubscribeRequest{Address: address, Ch: ch}
+	done := false
+	send := make(chan protocol.Message)
+	recv := make(chan protocol.Message)
+	defer close(send)
+	defer close(recv)
 	defer func() {
-		hub.Unsubscribe <- actor.UnsubscribeRequest{Address: address, Ch: ch}
+		done = true
+	}()
+	go func() {
+		for msg := range send {
+			data, err := json.Marshal(msg)
+			if err != nil {
+				log.Fatalf("could not marshall message: %s", err)
+			}
+			if err := nc.Publish("MESSAGES", data); err != nil {
+				log.Fatalf("could not publish to nats: %s", err)
+			}
+		}
+	}()
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalf("could not connect to jetstream: %s", err)
+	}
+	sub, err := js.SubscribeSync("MESSAGES", nats.DeliverAll())
+	if err != nil {
+		log.Fatalf("could not subscribe to MESSAGES: %s", err)
+	}
+	go func() {
+		for {
+			message, err := sub.NextMsg(1 * time.Second)
+			if done {
+				return
+			}
+			if err == nats.ErrTimeout {
+				continue
+			}
+			if err != nil {
+				log.Fatalf("unexpected error reading from nats: %s", err)
+			}
+			var msg protocol.Message
+			if err := json.Unmarshal(message.Data, &msg); err != nil {
+				log.Fatalf("could not decode message: %s", err)
+			}
+			recv <- msg
+		}
 	}()
 
 	errCh := make(chan error)
 	go func() {
-		err := readPump(conn, address, hub.Send)
+		err := readPump(conn, address, send)
 		log.Println("read pump:", err)
 		select {
 		case errCh <- err:
@@ -51,7 +93,7 @@ func wsDriver(hub *actor.Hub, conn *websocket.Conn) error {
 		}
 	}()
 	go func() {
-		err := writePump(conn, ch)
+		err := writePump(conn, recv)
 		log.Println("write pump:", err)
 		select {
 		case errCh <- err:
@@ -153,12 +195,14 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	hub := actor.NewHub()
-	go hub.Loop()
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		log.Fatalf("could not connect to nats: %s", err)
+	}
 	http.HandleFunc("/readyz", healthCheckHandler)
 	http.HandleFunc("/alivez", healthCheckHandler)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		wsHandler(hub, w, r)
+		wsHandler(nc, w, r)
 	})
 
 	port := os.Getenv("PORT")
