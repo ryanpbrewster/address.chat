@@ -2,11 +2,13 @@
   export let address: string;
   export let token: string;
 
+  type UnixMillis = number;
   interface Mailbox {
     readonly address: string;
     readonly name?: string;
   }
   interface Message {
+    readonly sentAt: UnixMillis;
     readonly from: string;
     readonly to: readonly string[];
     readonly content: string;
@@ -15,6 +17,7 @@
     readonly members: readonly string[];
   }
   interface GroupedMessages {
+    readonly timestamp: UnixMillis;
     readonly group: Group;
     readonly messages: readonly Message[];
   }
@@ -23,25 +26,35 @@
     return { members };
   }
   function groupKey(group: Group): string {
-    return group.members.join(":")
+    return group.members.join(":");
   }
-  function groupMessages(messages: readonly Message[]): Map<string, GroupedMessages> {
-    const grouped = new Map();
+  function groupMessages(
+    messages: readonly Message[]
+  ): readonly GroupedMessages[] {
+    const grouped: Map<string, GroupedMessages> = new Map();
     for (const msg of messages) {
       const group = extractGroup(msg);
       const key = groupKey(group);
-      const cur = grouped.get(key)
+      const cur = grouped.get(key);
       const updated: GroupedMessages = cur
-        ? { group, messages: [...cur.messages, msg] }
-        : { group, messages: [msg]};
-        grouped.set(key, updated);
+        ? {
+            group,
+            messages: [...cur.messages, msg].sort(
+              (a, b) => b.sentAt - a.sentAt
+            ),
+            timestamp: Math.max(cur.timestamp, msg.sentAt),
+          }
+        : { group, messages: [msg], timestamp: msg.sentAt };
+      grouped.set(key, updated);
     }
-    return grouped;
+    // Sort in descending timestamp order.
+    return [...grouped.values()].sort((a, b) => b.timestamp - a.timestamp);
   }
 
   import { ethers } from "ethers";
   import Mailbox from "./Mailbox.svelte";
   import Chip from "./Chip.svelte";
+  import { keccak256 } from "ethers/lib/utils";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
@@ -109,7 +122,11 @@
     if (authenticatedUntil && recipients.length > 0 && content) {
       // TODO: update protocol to support multiple recipients
       ws.send(
-        JSON.stringify({ from: address, to: recipients.map((m) => m.address), content })
+        JSON.stringify({
+          from: address,
+          to: recipients.map((m) => m.address),
+          content,
+        })
       );
       content = "";
     }
@@ -118,13 +135,18 @@
 
 <div class="body">
   <div class="leftnav">
-    {#each [...groupedMessages] as [key, grouped]}
-    <div class="navitem" on:click={() => selectedGroup = key}>{grouped.group.members}</div>
+    {#each groupedMessages as grouped}
+      <div
+        class="navitem"
+        on:click={() => (selectedGroup = groupKey(grouped.group))}
+      >
+        {grouped.group.members.join("\n")}
+      </div>
     {/each}
   </div>
   <div class="messages">
-    {#each [...(groupedMessages.get(selectedGroup)?.messages ?? [])] as m}
-    <p>{m.from}: {m.content}</p>
+    {#each groupedMessages.find((grouped) => groupKey(grouped.group) === selectedGroup)?.messages ?? [] as m}
+      <p>{m.from}: {m.content}</p>
     {/each}
   </div>
 </div>
@@ -176,24 +198,32 @@
   .body {
     display: flex;
     flex-direction: row;
+    height: 800px;
   }
   .leftnav {
     display: flex;
     flex-direction: column;
-    width: 240px;
+    width: 400px;
+    height: 100%;
     padding: 16px;
     border: solid 1px black;
     overflow: auto;
   }
   .navitem {
     border: solid 1px lightgray;
+    height: 80px;
     padding: 4px;
     border-radius: 4px;
+    text-align: left;
   }
   .messages {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    padding: 8px;
     width: 680px;
+    height: 100%;
+    overflow: auto;
   }
   .center {
     display: flex;
