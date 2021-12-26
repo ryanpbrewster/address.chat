@@ -55,6 +55,7 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 				}
 				log.Println("user asked us to send a message", payload)
 				msg := protocol.Message{
+					SentAt:  time.Now().UTC().UnixMilli(),
 					From:    address,
 					To:      payload.To,
 					Content: payload.Content,

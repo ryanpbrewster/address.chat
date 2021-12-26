@@ -19,6 +19,7 @@ type SendRequest struct {
 
 type Message struct {
 	From    string   `json:"from"`
+	SentAt  int64    `json:"sentAt"`
 	To      []string `json:"to"`
 	Content string   `json:"content"`
 }
