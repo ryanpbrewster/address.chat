@@ -32,3 +32,8 @@ func (m Message) Participants() map[string]bool {
 	}
 	return ps
 }
+
+type SyncMessage struct {
+	Messages []Message `json:"messages"`
+	Seqno    uint64    `json:"seqno"`
+}
