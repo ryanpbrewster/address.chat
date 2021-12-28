@@ -22,27 +22,27 @@ var upgrader = websocket.Upgrader{
 
 var numReaders int32
 
-func readPump(conn *websocket.Conn, ch chan<- []byte) {
-	log.Printf("readers = %d", atomic.AddInt32(&numReaders, 1))
-	defer log.Printf("readers = %d", atomic.AddInt32(&numReaders, -1))
+// The read pump is closed automatically if the underlying websocket connection closes.
+func readPump(conn *websocket.Conn, ch chan<- []byte) error {
+	log.Printf("++readers = %d", atomic.AddInt32(&numReaders, 1))
+	defer func() {
+		log.Printf("--readers = %d", atomic.AddInt32(&numReaders, -1))
+	}()
 
 	defer close(ch)
 	for {
 		mt, message, err := conn.ReadMessage()
 		if err != nil {
-			log.Println("failed to read from websocket:", err)
-			return
+			return err
 		}
 		log.Printf("recv: %q %s", mt, message)
 		switch mt {
 		case websocket.TextMessage:
 			ch <- message
 		case websocket.BinaryMessage:
-			log.Println("unexpected binary message", message)
-			return
+			return fmt.Errorf("unexpected binary message: %s", message)
 		case websocket.CloseMessage:
-			log.Println("client requesting close", message)
-			return
+			return fmt.Errorf("client requesting close: %s", message)
 		case websocket.PingMessage:
 			log.Println("ignoring client ping", message)
 		case websocket.PongMessage:
@@ -54,8 +54,10 @@ func readPump(conn *websocket.Conn, ch chan<- []byte) {
 var numWriters int32
 
 func writePump(conn *websocket.Conn, ch <-chan []byte) {
-	log.Printf("writers = %d", atomic.AddInt32(&numWriters, 1))
-	defer log.Printf("writers = %d", atomic.AddInt32(&numWriters, -1))
+	log.Printf("++writers = %d", atomic.AddInt32(&numWriters, 1))
+	defer func() {
+		log.Printf("--writers = %d", atomic.AddInt32(&numWriters, -1))
+	}()
 	for message := range ch {
 		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
 			log.Println("failed to write to websocket:", err)
@@ -67,8 +69,10 @@ func writePump(conn *websocket.Conn, ch <-chan []byte) {
 var numPublishers int32
 
 func publishPump(nc *nats.Conn, address string, read <-chan []byte) {
-	log.Printf("publishers = %d", atomic.AddInt32(&numPublishers, 1))
-	defer log.Printf("publishers = %d", atomic.AddInt32(&numPublishers, -1))
+	log.Printf("++publishers = %d", atomic.AddInt32(&numPublishers, 1))
+	defer func() {
+		log.Printf("--publishers = %d", atomic.AddInt32(&numPublishers, -1))
+	}()
 	for message := range read {
 		var payload protocol.SendRequest
 		if err := json.Unmarshal(message, &payload); err != nil {
@@ -97,8 +101,10 @@ func publishPump(nc *nats.Conn, address string, read <-chan []byte) {
 var numSubscribers int32
 
 func subscribePump(nc *nats.Conn, address string, write chan []byte, done chan struct{}) {
-	log.Printf("subscribers = %d", atomic.AddInt32(&numSubscribers, 1))
-	defer log.Printf("subscribers = %d", atomic.AddInt32(&numSubscribers, -1))
+	log.Printf("++subscribers = %d", atomic.AddInt32(&numSubscribers, 1))
+	defer func() {
+		log.Printf("--subscribers = %d", atomic.AddInt32(&numSubscribers, -1))
+	}()
 	defer close(write)
 
 	js, err := nc.JetStream()
@@ -145,7 +151,12 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 	defer close(done)
 
 	read := make(chan []byte)
-	go readPump(conn, read)
+	go func() {
+		select {
+		case signal <- readPump(conn, read):
+		default:
+		}
+	}()
 
 	address, err := extractAddress(<-read)
 	if err != nil {
