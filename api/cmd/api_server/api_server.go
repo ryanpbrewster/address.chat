@@ -29,7 +29,6 @@ func readPump(conn *websocket.Conn, ch chan<- []byte) error {
 		log.Printf("--readers = %d", atomic.AddInt32(&numReaders, -1))
 	}()
 
-	defer close(ch)
 	for {
 		mt, message, err := conn.ReadMessage()
 		if err != nil {
@@ -53,22 +52,22 @@ func readPump(conn *websocket.Conn, ch chan<- []byte) error {
 
 var numWriters int32
 
-func writePump(conn *websocket.Conn, ch <-chan []byte) {
+func writePump(conn *websocket.Conn, ch <-chan []byte) error {
 	log.Printf("++writers = %d", atomic.AddInt32(&numWriters, 1))
 	defer func() {
 		log.Printf("--writers = %d", atomic.AddInt32(&numWriters, -1))
 	}()
 	for message := range ch {
 		if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
-			log.Println("failed to write to websocket:", err)
-			return
+			return fmt.Errorf("failed to write to websocket: %s", err)
 		}
 	}
+	return nil
 }
 
 var numPublishers int32
 
-func publishPump(nc *nats.Conn, address string, read <-chan []byte) {
+func publishPump(nc *nats.Conn, address string, read <-chan []byte) error {
 	log.Printf("++publishers = %d", atomic.AddInt32(&numPublishers, 1))
 	defer func() {
 		log.Printf("--publishers = %d", atomic.AddInt32(&numPublishers, -1))
@@ -76,8 +75,7 @@ func publishPump(nc *nats.Conn, address string, read <-chan []byte) {
 	for message := range read {
 		var payload protocol.SendRequest
 		if err := json.Unmarshal(message, &payload); err != nil {
-			log.Printf("invalid SendRequest: %s", err)
-			return
+			return fmt.Errorf("invalid SendRequest: %s", err)
 		}
 		log.Println("user asked us to send a message", payload)
 		msg := protocol.Message{
@@ -88,40 +86,42 @@ func publishPump(nc *nats.Conn, address string, read <-chan []byte) {
 		}
 		data, err := json.Marshal(msg)
 		if err != nil {
-			log.Fatalf("could not marshall msg: %s", err)
+			return fmt.Errorf("could not marshall msg: %s", err)
 		}
 		for addr := range msg.Participants() {
 			if err := nc.Publish(fmt.Sprintf("MESSAGES.%s", addr), data); err != nil {
-				log.Fatalf("could not publish to nats: %s", err)
+				return fmt.Errorf("could not publish to nats: %s", err)
 			}
 		}
 	}
+	return nil
 }
 
 var numSubscribers int32
 
-func subscribePump(nc *nats.Conn, address string, write chan []byte, done chan struct{}) {
+func subscribePump(nc *nats.Conn, address string, write chan []byte, done chan struct{}) error {
 	log.Printf("++subscribers = %d", atomic.AddInt32(&numSubscribers, 1))
 	defer func() {
 		log.Printf("--subscribers = %d", atomic.AddInt32(&numSubscribers, -1))
 	}()
-	defer close(write)
 
 	js, err := nc.JetStream()
 	if err != nil {
-		log.Fatalf("could not connect to jetstream: %s", err)
+		return fmt.Errorf("could not connect to jetstream: %s", err)
 	}
 
 	subj := fmt.Sprintf("MESSAGES.%s", address)
 	sub, err := js.Subscribe(subj, func(message *nats.Msg) {
 		meta, err := message.Metadata()
 		if err != nil {
-			log.Fatalf("unexpected metadata error: %s", err)
+			log.Printf("unexpected metadata error, skipping: %s", err)
+			return
 		}
 		log.Println("received nats message:", meta)
 		var msg protocol.Message
 		if err := json.Unmarshal(message.Data, &msg); err != nil {
-			log.Fatalf("could not parse message: %s", err)
+			log.Printf("could not parse message, skipping: %s", err)
+			return
 		}
 		sync := protocol.SyncMessage{
 			Messages: []protocol.Message{msg},
@@ -129,19 +129,22 @@ func subscribePump(nc *nats.Conn, address string, write chan []byte, done chan s
 		}
 		payload, err := json.Marshal(sync)
 		if err != nil {
-			log.Fatalf("could not marshall sync message: %s", err)
+			log.Printf("could not marshall sync message, skipping: %s", err)
+			return
 		}
 		write <- payload
 		if err := message.AckSync(); err != nil {
 			log.Println("ack:", err)
+			return
 		}
 	}, nats.DeliverAll())
 	if err != nil {
-		log.Fatalf("could not subscribe to MESSAGES: %s", err)
+		return fmt.Errorf("could not subscribe to MESSAGES: %s", err)
 	}
 	defer sub.Drain()
 
 	<-done
+	return nil
 }
 
 func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
@@ -152,28 +155,44 @@ func wsDriver(nc *nats.Conn, conn *websocket.Conn) {
 
 	read := make(chan []byte)
 	go func() {
+		defer close(read)
 		select {
 		case signal <- readPump(conn, read):
 		default:
 		}
 	}()
 
-	address, err := extractAddress(<-read)
-	if err != nil {
-		log.Println("verify address:", err)
-		signal <- fmt.Errorf("verify address: %s", err)
-		return
-	}
-	if err := conn.WriteJSON(protocol.AuthResponse{AuthenticatedUntil: 1}); err != nil {
-		return
-	}
-
-	go publishPump(nc, address, read)
-
 	write := make(chan []byte)
-	go writePump(conn, write)
+	go func() {
+		defer close(write)
+		address, err := extractAddress(<-read)
+		if err != nil {
+			select {
+			case signal <- err:
+			default:
+			}
+			return
+		}
 
-	go subscribePump(nc, address, write, done)
+		go func() {
+			select {
+			case signal <- publishPump(nc, address, read):
+			default:
+			}
+		}()
+
+		select {
+		case signal <- subscribePump(nc, address, write, done):
+		default:
+		}
+	}()
+
+	go func() {
+		select {
+		case signal <- writePump(conn, write):
+		default:
+		}
+	}()
 
 	if err := <-signal; err != nil {
 		conn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
