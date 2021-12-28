@@ -54,7 +54,6 @@
   import { ethers } from "ethers";
   import Mailbox from "./Mailbox.svelte";
   import Chip from "./Chip.svelte";
-  import { keccak256 } from "ethers/lib/utils";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
@@ -79,7 +78,7 @@
       if (typeof msg.authenticatedUntil === "number") {
         authenticatedUntil = msg.authenticatedUntil || null;
       } else {
-        messages = [...messages, msg];
+        messages = [...messages, ...msg.messages];
       }
     } catch (e) {
       console.error(e);
