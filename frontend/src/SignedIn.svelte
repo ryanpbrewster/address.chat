@@ -2,6 +2,10 @@
   export let address: string;
   export let token: string;
 
+  function sleep(millis: number): Promise<void> {
+      return new Promise((r) => setTimeout(r, millis))
+  }
+
   type UnixMillis = number;
   interface Mailbox {
     readonly address: string;
@@ -13,6 +17,10 @@
     readonly to: readonly string[];
     readonly content: string;
   }
+  interface SyncMessage {
+    readonly seqno: number;
+    readonly messages: readonly Message[];
+  }
   interface Group {
     readonly members: readonly string[];
   }
@@ -22,8 +30,9 @@
     readonly messages: readonly Message[];
   }
   function extractGroup(message: Message): Group {
-    const members = [...new Set([message.from, ...message.to])].sort();
-    return { members };
+    const members = new Set([message.from, ...message.to]);
+    members.delete(address);
+    return { members: members.size === 0 ? [address] : [...members].sort() };
   }
   function groupKey(group: Group): string {
     return group.members.join(":");
@@ -63,7 +72,6 @@
 
   // const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
   const ws = new WebSocket("ws://localhost:8080/ws");
-  let authenticatedUntil: number | null = null;
   let messages: readonly Message[] = [];
   $: groupedMessages = groupMessages(messages);
   let selectedGroup: string | null = null;
@@ -74,12 +82,8 @@
   ws.onmessage = (evt) => {
     console.log("[MESSAGE]", evt);
     try {
-      const msg = JSON.parse(evt.data);
-      if (typeof msg.authenticatedUntil === "number") {
-        authenticatedUntil = msg.authenticatedUntil || null;
-      } else {
-        messages = [...messages, ...msg.messages];
-      }
+      const msg: SyncMessage = JSON.parse(evt.data);
+      messages = [...messages, ...msg.messages];
     } catch (e) {
       console.error(e);
     }
@@ -99,10 +103,16 @@
     if (evt.key !== "Enter") return;
     let recipient: Mailbox | null = null;
     if (ENS_REGEX.test(partialRecipient)) {
-      const address = await provider.resolveName(partialRecipient);
+      const address: string | null = await Promise.race([
+        provider.resolveName(partialRecipient),
+        sleep(1_000).then(() => null),
+      ]);
       recipient = address ? { address, name: partialRecipient } : null;
     } else if (ADDRESS_REGEX.test(partialRecipient)) {
-      const name = await provider.lookupAddress(partialRecipient);
+      const name: string | null = await Promise.race([
+        provider.lookupAddress(partialRecipient),
+        sleep(1_000).then(() => null),
+      ]);
       recipient = { address: partialRecipient, name };
     }
     if (recipient) {
@@ -118,7 +128,7 @@
     tryFlush();
   }
   async function tryFlush() {
-    if (authenticatedUntil && recipients.length > 0 && content) {
+    if (recipients.length > 0 && content) {
       // TODO: update protocol to support multiple recipients
       ws.send(
         JSON.stringify({
@@ -181,8 +191,7 @@
   </table>
 
   <textarea
-    placeholder={authenticatedUntil ? "Type message here" : "Connecting...."}
-    disabled={!authenticatedUntil}
+    placeholder="Type message here"
     bind:value={content}
     on:keypress={contentHandler}
   />
