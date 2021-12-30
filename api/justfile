@@ -1,2 +1,5 @@
 serve:
   go run cmd/api_server/api_server.go
+
+deploy:
+  flyctl deploy

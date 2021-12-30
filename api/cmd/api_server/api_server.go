@@ -224,7 +224,7 @@ func main() {
 	natsUrl := flag.String("nats", nats.DefaultURL, "the url for the NATS cluster")
 	nc, err := nats.Connect(*natsUrl)
 	if err != nil {
-		log.Fatalf("could not connect to nats: %s", err)
+		log.Fatalf("could not connect to nats @ %s: %s", *natsUrl, err)
 	}
 	js, err := nc.JetStream()
 	if err != nil {
