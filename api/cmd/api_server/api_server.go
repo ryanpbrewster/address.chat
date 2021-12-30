@@ -222,6 +222,7 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	natsUrl := flag.String("nats", nats.DefaultURL, "the url for the NATS cluster")
+	flag.Parse()
 	nc, err := nats.Connect(*natsUrl)
 	if err != nil {
 		log.Fatalf("could not connect to nats @ %s: %s", *natsUrl, err)
