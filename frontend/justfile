@@ -1,5 +1,8 @@
 serve:
   npm run dev
 
-deploy:
+build:
+  npm run build
+
+deploy: build
   npm run deploy

@@ -68,8 +68,8 @@
     author = { ...author, name };
   });
 
-  // const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
-  const ws = new WebSocket("ws://localhost:8080/ws");
+  const ws = new WebSocket("wss://address-chat-api.fly.dev/ws");
+  // const ws = new WebSocket("ws://localhost:8080/ws");
   let messages: readonly Message[] = [];
   $: groupedMessages = groupMessages(messages);
   let selectedGroup: Group | null = null;
