@@ -3,7 +3,7 @@
   export let token: string;
 
   function sleep(millis: number): Promise<void> {
-      return new Promise((r) => setTimeout(r, millis))
+    return new Promise((r) => setTimeout(r, millis));
   }
 
   type UnixMillis = number;
@@ -49,7 +49,7 @@
         ? {
             group,
             messages: [...cur.messages, msg].sort(
-              (a, b) => b.sentAt - a.sentAt
+              (a, b) => a.sentAt - b.sentAt
             ),
             timestamp: Math.max(cur.timestamp, msg.sentAt),
           }
@@ -61,8 +61,6 @@
   }
 
   import { ethers } from "ethers";
-  import Mailbox from "./Mailbox.svelte";
-  import Chip from "./Chip.svelte";
   const provider = new ethers.providers.Web3Provider((window as any).ethereum);
 
   let author: Mailbox = { address };
@@ -74,7 +72,7 @@
   const ws = new WebSocket("ws://localhost:8080/ws");
   let messages: readonly Message[] = [];
   $: groupedMessages = groupMessages(messages);
-  let selectedGroup: string | null = null;
+  let selectedGroup: Group | null = null;
   ws.onopen = (evt) => {
     console.log("[OPEN]", evt);
     ws.send(token);
@@ -94,112 +92,81 @@
   const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
   const ENS_REGEX = /^([a-z]+\.)+eth$/;
 
-  let recipients: readonly Mailbox[] = [];
-  function deleteRecipient(i: number) {
-    recipients = [...recipients.slice(0, i), ...recipients.slice(i + 1)];
-  }
-  let partialRecipient: string = "";
-  async function toHandler(evt: KeyboardEvent) {
-    if (evt.key !== "Enter") return;
-    let recipient: Mailbox | null = null;
-    if (ENS_REGEX.test(partialRecipient)) {
-      const address: string | null = await Promise.race([
-        provider.resolveName(partialRecipient),
-        sleep(1_000).then(() => null),
-      ]);
-      recipient = address ? { address, name: partialRecipient } : null;
-    } else if (ADDRESS_REGEX.test(partialRecipient)) {
-      const name: string | null = await Promise.race([
-        provider.lookupAddress(partialRecipient),
-        sleep(1_000).then(() => null),
-      ]);
-      recipient = { address: partialRecipient, name };
+  async function startConversation(rawRecipients: string) {
+    const tokens = rawRecipients.split(/[\s,]+/).filter((t) => t.length > 0);
+    console.log("parsing recipients from:", tokens);
+    const recipients: Mailbox[] = [];
+    for (const token of tokens) {
+      if (ENS_REGEX.test(token)) {
+        console.log("trying to resolve ENS domain:", token);
+        const address: string | null = await Promise.race([
+          provider.resolveName(token),
+          sleep(1_000).then(() => null),
+        ]);
+        if (!address) throw new Error(`could not resolve ${token}`);
+        recipients.push({ address, name: token });
+      } else if (ADDRESS_REGEX.test(token)) {
+        const name: string | null = await Promise.race([
+          provider.lookupAddress(token),
+          sleep(1_000).then(() => null),
+        ]);
+        recipients.push({ address: token, name });
+      } else {
+        throw new Error(`invalid recipient: ${token}`);
+      }
     }
-    if (recipient) {
-      recipients = [...recipients, recipient];
-      partialRecipient = "";
-    }
+    ws.send(
+      JSON.stringify({
+        from: address,
+        to: recipients.map((r) => r.address),
+        content: "Let's chat!",
+      })
+    );
   }
 
   let content = "";
   function contentHandler(evt: KeyboardEvent) {
     if (evt.key !== "Enter") return;
     if (!evt.ctrlKey) return;
-    tryFlush();
-  }
-  async function tryFlush() {
-    if (recipients.length > 0 && content) {
-      // TODO: update protocol to support multiple recipients
-      ws.send(
-        JSON.stringify({
-          from: address,
-          to: recipients.map((m) => m.address),
-          content,
-        })
-      );
-      content = "";
-    }
+    if (!content) return;
+    // TODO: update protocol to support multiple recipients
+    ws.send(
+      JSON.stringify({
+        from: address,
+        to: selectedGroup.members,
+        content,
+      })
+    );
+    content = "";
   }
 </script>
 
 <div class="body">
   <div class="leftnav">
+    <button
+      on:click={() =>
+        startConversation(prompt("Input the addresses, comma separated"))}
+    >
+      New Conversation
+    </button>
     {#each groupedMessages as grouped}
-      <div
-        class="navitem"
-        on:click={() => (selectedGroup = groupKey(grouped.group))}
-      >
+      <div class="navitem" on:click={() => (selectedGroup = grouped.group)}>
         {grouped.group.members.join("\n")}
       </div>
     {/each}
   </div>
-  <div class="messages">
-    {#each groupedMessages.find((grouped) => groupKey(grouped.group) === selectedGroup)?.messages ?? [] as m}
-      <p>{m.from}: {m.content}</p>
-    {/each}
-  </div>
-</div>
-<div class="center">
-  <table>
-    <tbody>
-      <tr
-        ><td>From:</td><td
-          ><Mailbox name={author.name} address={author.address} />
-        </td></tr
-      >
-      <tr
-        ><td>To:</td><td>
-          <div>
-            {#each recipients as recipient, i}
-              <Chip onDelete={() => deleteRecipient(i)}
-                ><Mailbox
-                  name={recipient.name}
-                  address={recipient.address}
-                /></Chip
-              >
-            {/each}
-            <input
-              type="text"
-              placeholder="ryanbrewster.eth"
-              bind:value={partialRecipient}
-              on:keypress={toHandler}
-            />
-          </div>
-        </td></tr
-      >
-    </tbody>
-  </table>
-
-  <textarea
-    placeholder="Type message here"
-    bind:value={content}
-    on:keypress={contentHandler}
-  />
-  <button
-    disabled={partialRecipient.length > 0 ||
-      recipients.length === 0 ||
-      content.length === 0}>Send</button
-  >
+  {#if selectedGroup}
+    <div class="messages">
+      {#each groupedMessages.find((grouped) => groupKey(grouped.group) === groupKey(selectedGroup))?.messages ?? [] as m}
+        <p>{m.from}: {m.content}</p>
+      {/each}
+      <textarea
+        placeholder="Type message here"
+        bind:value={content}
+        on:keypress={contentHandler}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
